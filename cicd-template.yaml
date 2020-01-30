@@ -20,7 +20,7 @@ parameters:
   required: true
 - displayName: Deploy Eclipse Che
   description: Deploy Eclipse Che in order to use as an online IDE for changing code in this demo
-  value: "true"
+  value: "false"
   name: DEPLOY_CHE
   required: true
 - displayName: Ephemeral
@@ -377,12 +377,12 @@ objects:
             # set limits
 
             # dev project
-            oc autoscale dc/tasks --min 1 --max 10 --cpu-percent=20 -n ${DEV_PROJECT}
-            oc set resources dc/tasks --limits=cpu=100m,memory=300Mi --requests=cpu=1m,memory=20Mi -n ${DEV_PROJECT}
+            oc autoscale dc/tasks --min 1 --max 10 --cpu-percent=60 -n ${DEV_PROJECT}
+            oc set resources dc/tasks --limits=cpu=300m,memory=300Mi --requests=cpu=1m,memory=60Mi -n ${DEV_PROJECT}
 
             # stage project
-            oc autoscale dc/tasks --min 1 --max 10 --cpu-percent=20 -n ${STAGE_PROJECT}
-            oc set resources dc/tasks --limits=cpu=100m,memory=300Mi --requests=cpu=1m,memory=20Mi -n ${STAGE_PROJECT}
+            oc autoscale dc/tasks --min 1 --max 10 --cpu-percent=60 -n ${STAGE_PROJECT}
+            oc set resources dc/tasks --limits=cpu=300m,memory=300Mi --requests=cpu=1m,memory=60Mi -n ${STAGE_PROJECT}
 
             # deploy gogs
             HOSTNAME=$(oc get route jenkins -o template --template='{{.spec.host}}' | sed "s/jenkins-${CICD_NAMESPACE}.//g")
