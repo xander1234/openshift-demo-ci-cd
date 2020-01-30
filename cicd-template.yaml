@@ -104,7 +104,7 @@ objects:
                   sh "${mvnCmd} install -DskipTests=true"
                 }
               }
-              stage('Test') {
+              stage('Unit Test') {
                 steps {
                   sh "${mvnCmd} test"
                   step([$class: 'JUnitResultArchiver', testResults: '**/target/surefire-reports/TEST-*.xml'])
@@ -124,7 +124,10 @@ objects:
               }
               stage('Build Image') {
                 steps {
+                  sh "rm -rf oc-build && mkdir -p oc-build/configuration"
                   sh "cp target/openshift-tasks.war target/ROOT.war"
+                  sh "cp configuration/*.properties oc-build/configuration"
+                  
                   script {
                     openshift.withCluster() {
                       openshift.withProject(env.DEV_PROJECT) {
@@ -137,6 +140,7 @@ objects:
               stage('Deploy DEV') {
                 steps {
                   script {
+
                     openshift.withCluster() {
                       openshift.withProject(env.DEV_PROJECT) {
                         // Update the Config Map which contains the users for the Tasks application
