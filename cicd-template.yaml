@@ -20,7 +20,7 @@ parameters:
   required: true
 - displayName: Deploy Eclipse Che
   description: Deploy Eclipse Che in order to use as an online IDE for changing code in this demo
-  value: "false"
+  value: "true"
   name: DEPLOY_CHE
   required: true
 - displayName: Ephemeral
@@ -139,7 +139,24 @@ objects:
                   script {
                     openshift.withCluster() {
                       openshift.withProject(env.DEV_PROJECT) {
+                        // Update the Config Map which contains the users for the Tasks application
+                        openshift.selector('configmap', 'tasks-config').delete()
+                        // Update the Config Map which contains the users for the Tasks application         
+                        def configmap = openshift.create('configmap', 'tasks-config', '--from-file=./configuration/application-users.properties', '--from-file=./configuration/application-roles.properties')
+                        // Deploy the development application.
                         openshift.selector("dc", "tasks").rollout().latest();
+
+                        // Wait for application to be deployed
+                        def dc = openshift.selector("dc", "tasks").object() 
+                        def dc_version = dc.status.latestVersion 
+                        def rc = openshift.selector("rc", "tasks-${dc_version}").object() 
+
+                        echo "Waiting for ReplicationController tasks-${dc_version} to be ready"
+
+                        while (rc.spec.replicas != rc.status.readyReplicas) {
+                            sleep 5
+                            rc = openshift.selector("rc", "tasks-${dc_version}").object()
+                        }
                       }
                     }
                   }
@@ -172,7 +189,24 @@ objects:
                   script {
                     openshift.withCluster() {
                       openshift.withProject(env.STAGE_PROJECT) {
+                        // Update the Config Map which contains the users for the Tasks application
+                        openshift.selector('configmap', 'tasks-config').delete()
+                        // Update the Config Map which contains the users for the Tasks application         
+                        def configmap = openshift.create('configmap', 'tasks-config', '--from-file=./configuration/application-users.properties', '--from-file=./configuration/application-roles.properties')
+                        // Deploy the development application.
                         openshift.selector("dc", "tasks").rollout().latest();
+
+                        // Wait for application to be deployed
+                        def dc = openshift.selector("dc", "tasks").object() 
+                        def dc_version = dc.status.latestVersion 
+                        def rc = openshift.selector("rc", "tasks-${dc_version}").object() 
+
+                        echo "Waiting for ReplicationController tasks-${dc_version} to be ready"
+
+                        while (rc.spec.replicas != rc.status.readyReplicas) {
+                            sleep 5
+                            rc = openshift.selector("rc", "tasks-${dc_version}").object()
+                        }  
                       }
                     }
                   }
@@ -294,9 +328,10 @@ objects:
               oc label secret quay-cicd-secret credential.sync.jenkins.openshift.io=true -n ${CICD_NAMESPACE}
               
               # dev
-              oc create secret docker-registry quay-cicd-secret --docker-server=quay.io --docker-username="${QUAY_USERNAME}" --docker-password="${QUAY_PASSWORD}" --docker-email=cicd@redhat.com -n ${DEV_PROJECT}
+              oc create secret docker-registry quay-cicd-secret --docker-server=quay.io --docker-username="${QUAY_USERNAME}" --docker-password="${QUAY_PASSWORD}" --docker-email=cicd@redhat.com -n ${DEV_PROJECT}              
               oc new-build --name=tasks --image-stream=wildfly:latest --binary=true --push-secret=quay-cicd-secret --to-docker --to='quay.io/${QUAY_USERNAME}/${QUAY_REPOSITORY}:latest' -n ${DEV_PROJECT}
               oc new-app --name=tasks --docker-image=quay.io/${QUAY_USERNAME}/${QUAY_REPOSITORY}:latest --allow-missing-images -n ${DEV_PROJECT}
+              oc create configmap tasks-config --from-literal="application-users.properties=Placeholder" --from-literal="application-roles.properties=Placeholder" -n ${DEV_PROJECT}
               oc set triggers dc tasks --remove-all -n ${DEV_PROJECT}
               oc patch dc tasks -p '{"spec": {"template": {"spec": {"containers": [{"name": "tasks", "imagePullPolicy": "Always"}]}}}}' -n ${DEV_PROJECT}
               oc delete is tasks -n ${DEV_PROJECT}
@@ -305,18 +340,21 @@ objects:
               # stage
               oc create secret docker-registry quay-cicd-secret --docker-server=quay.io --docker-username="${QUAY_USERNAME}" --docker-password="${QUAY_PASSWORD}" --docker-email=cicd@redhat.com -n ${STAGE_PROJECT}
               oc new-app --name=tasks --docker-image=quay.io/${QUAY_USERNAME}/${QUAY_REPOSITORY}:stage --allow-missing-images -n ${STAGE_PROJECT}
+              oc create configmap tasks-config --from-literal="application-users.properties=Placeholder" --from-literal="application-roles.properties=Placeholder" -n ${STAGE_PROJECT}
               oc set triggers dc tasks --remove-all -n ${STAGE_PROJECT}
               oc patch dc tasks -p '{"spec": {"template": {"spec": {"containers": [{"name": "tasks", "imagePullPolicy": "Always"}]}}}}' -n ${STAGE_PROJECT}
               oc delete is tasks -n ${STAGE_PROJECT}
               oc secrets link default quay-cicd-secret --for=pull -n ${STAGE_PROJECT}
             else
-              # dev
+              # dev              
               oc new-build --name=tasks --image-stream=wildfly:latest --binary=true -n ${DEV_PROJECT}
               oc new-app tasks:latest --allow-missing-images -n ${DEV_PROJECT}
+              oc create configmap tasks-config --from-literal="application-users.properties=Placeholder" --from-literal="application-roles.properties=Placeholder" -n ${DEV_PROJECT}
               oc set triggers dc -l app=tasks --containers=tasks --from-image=tasks:latest --manual -n ${DEV_PROJECT}
               
-              # stage
+              # stage              
               oc new-app tasks:stage --allow-missing-images -n ${STAGE_PROJECT}
+              oc create configmap tasks-config --from-literal="application-users.properties=Placeholder" --from-literal="application-roles.properties=Placeholder" -n ${STAGE_PROJECT}
               oc set triggers dc -l app=tasks --containers=tasks --from-image=tasks:stage --manual -n ${STAGE_PROJECT}
             fi
             
@@ -333,6 +371,18 @@ objects:
             oc set probe dc/tasks --readiness --get-url=http://:8080/ws/demo/healthcheck --initial-delay-seconds=30 --failure-threshold=10 --period-seconds=10 -n ${STAGE_PROJECT}
             oc set probe dc/tasks --liveness  --get-url=http://:8080/ws/demo/healthcheck --initial-delay-seconds=180 --failure-threshold=10 --period-seconds=10 -n ${STAGE_PROJECT}
             oc rollout cancel dc/tasks -n ${DEV_PROJECT}
+
+            ##### adjust app #####
+            # autoscale
+            # set limits
+
+            # dev project
+            oc autoscale dc/tasks --min 1 --max 10 --cpu-percent=20 -n ${DEV_PROJECT}
+            oc set resources dc/tasks --limits=cpu=100m,memory=300Mi --requests=cpu=1m,memory=20Mi -n ${DEV_PROJECT}
+
+            # stage project
+            oc autoscale dc/tasks --min 1 --max 10 --cpu-percent=20 -n ${STAGE_PROJECT}
+            oc set resources dc/tasks --limits=cpu=100m,memory=300Mi --requests=cpu=1m,memory=20Mi -n ${STAGE_PROJECT}
 
             # deploy gogs
             HOSTNAME=$(oc get route jenkins -o template --template='{{.spec.host}}' | sed "s/jenkins-${CICD_NAMESPACE}.//g")
