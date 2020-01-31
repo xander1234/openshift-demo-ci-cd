@@ -124,10 +124,7 @@ objects:
               }
               stage('Build Image') {
                 steps {
-                  sh "rm -rf oc-build && mkdir -p oc-build/configuration"
                   sh "cp target/openshift-tasks.war target/ROOT.war"
-                  sh "cp configuration/*.properties oc-build/configuration"
-                  
                   script {
                     openshift.withCluster() {
                       openshift.withProject(env.DEV_PROJECT) {
@@ -325,7 +322,7 @@ objects:
 
             # setup dev env
             oc import-image wildfly --from=openshift/wildfly-120-centos7 --confirm -n ${DEV_PROJECT} 
-            
+                        
             if [ "${ENABLE_QUAY}" == "true" ] ; then
               # cicd
               oc create secret generic quay-cicd-secret --from-literal="username=${QUAY_USERNAME}" --from-literal="password=${QUAY_PASSWORD}" -n ${CICD_NAMESPACE}
@@ -333,7 +330,7 @@ objects:
               
               # dev
               oc create secret docker-registry quay-cicd-secret --docker-server=quay.io --docker-username="${QUAY_USERNAME}" --docker-password="${QUAY_PASSWORD}" --docker-email=cicd@redhat.com -n ${DEV_PROJECT}              
-              oc new-build --name=tasks --image-stream=wildfly:latest --binary=true --push-secret=quay-cicd-secret --to-docker --to='quay.io/${QUAY_USERNAME}/${QUAY_REPOSITORY}:latest' -n ${DEV_PROJECT}
+              oc new-build --name=tasks --image-stream=wildfly:latest --binary=true --push-secret=quay-cicd-secret --to-docker --to='quay.io/${QUAY_USERNAME}/${QUAY_REPOSITORY}:latest' -n ${DEV_PROJECT}              
               oc new-app --name=tasks --docker-image=quay.io/${QUAY_USERNAME}/${QUAY_REPOSITORY}:latest --allow-missing-images -n ${DEV_PROJECT}
               oc create configmap tasks-config --from-literal="application-users.properties=Placeholder" --from-literal="application-roles.properties=Placeholder" -n ${DEV_PROJECT}
               oc set triggers dc tasks --remove-all -n ${DEV_PROJECT}
@@ -381,12 +378,12 @@ objects:
             # set limits
 
             # dev project
-            oc autoscale dc/tasks --min 1 --max 10 --cpu-percent=60 -n ${DEV_PROJECT}
-            oc set resources dc/tasks --limits=cpu=300m,memory=300Mi --requests=cpu=1m,memory=60Mi -n ${DEV_PROJECT}
+            #oc autoscale dc/tasks --min 1 --max 10 --cpu-percent=60 -n ${DEV_PROJECT}
+            #oc set resources dc/tasks --limits=cpu=1,memory=300Mi --requests=cpu=50m,memory=60Mi -n ${DEV_PROJECT}
 
             # stage project
-            oc autoscale dc/tasks --min 1 --max 10 --cpu-percent=60 -n ${STAGE_PROJECT}
-            oc set resources dc/tasks --limits=cpu=300m,memory=300Mi --requests=cpu=1m,memory=60Mi -n ${STAGE_PROJECT}
+            #oc autoscale dc/tasks --min 1 --max 10 --cpu-percent=60 -n ${STAGE_PROJECT}
+            #oc set resources dc/tasks --limits=cpu=1,memory=300Mi --requests=cpu=50m,memory=60Mi -n ${STAGE_PROJECT}
 
             # deploy gogs
             HOSTNAME=$(oc get route jenkins -o template --template='{{.spec.host}}' | sed "s/jenkins-${CICD_NAMESPACE}.//g")
