@@ -98,9 +98,13 @@ objects:
               label 'maven'
             }
             stages {
-              stage('Build App') {
+              stage('SCM pull') {
                 steps {
                   git branch: 'eap-7', url: 'http://gogs:3000/gogs/openshift-tasks.git'
+                }
+              }
+              stage('Build App') {
+                steps {
                   sh "${mvnCmd} install -DskipTests=true"
                 }
               }
@@ -378,12 +382,12 @@ objects:
             # set limits
 
             # dev project
-            #oc autoscale dc/tasks --min 1 --max 10 --cpu-percent=60 -n ${DEV_PROJECT}
-            #oc set resources dc/tasks --limits=cpu=1,memory=300Mi --requests=cpu=50m,memory=60Mi -n ${DEV_PROJECT}
+            oc autoscale dc/tasks --min 1 --max 10 --cpu-percent=60 -n ${DEV_PROJECT}
+            oc set resources dc/tasks --limits=cpu=1,memory=300Mi --requests=cpu=50m,memory=60Mi -n ${DEV_PROJECT}
 
             # stage project
-            #oc autoscale dc/tasks --min 1 --max 10 --cpu-percent=60 -n ${STAGE_PROJECT}
-            #oc set resources dc/tasks --limits=cpu=1,memory=300Mi --requests=cpu=50m,memory=60Mi -n ${STAGE_PROJECT}
+            oc autoscale dc/tasks --min 1 --max 10 --cpu-percent=60 -n ${STAGE_PROJECT}
+            oc set resources dc/tasks --limits=cpu=1,memory=300Mi --requests=cpu=50m,memory=60Mi -n ${STAGE_PROJECT}
 
             # deploy gogs
             HOSTNAME=$(oc get route jenkins -o template --template='{{.spec.host}}' | sed "s/jenkins-${CICD_NAMESPACE}.//g")
