@@ -164,18 +164,6 @@ Follow these [instructions](docs/using-eclipse-che.md) to use Eclipse Che for ed
 
 [![Continuous Delivery with OpenShift](images/youtube.png?raw=true)](https://youtu.be/_xh4XPkdXe0)
 
-# Nuevo
-
-* Strategy Blue Green
-  -> ambiente produccion
-* Rollback
-* autoscaler a la app
-  -> metricas deben estar habilitadas
-
-libreria
-variables en openshift para credenciales
-Rollback
-
 
 
 
