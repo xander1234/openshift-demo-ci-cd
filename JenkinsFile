@@ -150,6 +150,7 @@ pipeline {
     // Do not activate the new version yet.
     stage('Blue/Green Production Deployment') {
       steps {
+
       echo "Blue/Green Deployment"
         script {
           openshift.withCluster() {
@@ -157,8 +158,8 @@ pipeline {
               activeApp = openshift.selector("route", "tasks").object().spec.to.name
               if (activeApp == "tasks-green") {
               destApp = "tasks-blue"
-
               }
+
               echo "Active Application: " + activeApp
               echo "Destination Application: " + destApp
               // Update the Image on the Production Deployment Config
@@ -174,7 +175,7 @@ pipeline {
               openshift.selector("configmap", "${destApp}-config").delete()
 
               // Update the Config Map which contains the users for the Tasks application
-              def configmap = openshift.create("configmap", "${destApp}-config", "--from-file =./configuration/application-users.properties", "--from-file =./configuration/application-roles.properties")
+              def configmap = openshift.create('configmap', "${destApp}-config", '--from-file=./configuration/application-users.properties', '--from-file=./configuration/application-roles.properties')
 
               // Deploy the inactive application.
               openshift.selector("dc", "${destApp}").rollout().latest();
@@ -182,7 +183,9 @@ pipeline {
               // Wait for application to be deployed
               def dc_prod = openshift.selector("dc", "${destApp}").object() 
               def dc_version = dc_prod.status.latestVersion 
-              def rc_prod = openshift.selector("rc", "${destApp}-${dc_version}").object() echo "Waiting for ${destApp} to be ready"
+              def rc_prod = openshift.selector("rc", "${destApp}-${dc_version}").object() 
+              
+              echo "Waiting for ${destApp} to be ready"
               
               while (rc_prod.spec.replicas != rc_prod.status.readyReplicas) {
                 sleep 5
@@ -194,12 +197,15 @@ pipeline {
       }
     }
     
-
     stage('Switch over to new Version') {
       steps {
         input "Switch Production?"
         echo "Switching Production application to ${destApp}."
-
+        /*
+        timeout(time:15, unit:'MINUTES') {
+            input message: "Promote to PROD?", ok: "Promote"
+        }
+        */
         script {
           openshift.withCluster() {
             openshift.withProject(env.PROD_PROJECT) {
