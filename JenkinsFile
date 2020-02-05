@@ -8,9 +8,13 @@ pipeline {
     label 'maven'
   }
   stages {
-    stage('Build App') {
+    stage('SCM pull') {
       steps {
         git branch: 'eap-7', url: 'http://gogs:3000/gogs/openshift-tasks.git'
+      }
+    }
+    stage('Build App') {
+      steps {
         sh "${mvnCmd} install -DskipTests=true"
       }
     }
