@@ -18,6 +18,10 @@ parameters:
   value: stage
   name: STAGE_PROJECT
   required: true
+- displayName: PROD project name
+  value: prod
+  name: PROD_PROJECT
+  required: true
 - displayName: Deploy Eclipse Che
   description: Deploy Eclipse Che in order to use as an online IDE for changing code in this demo
   value: "false"
@@ -88,10 +92,14 @@ objects:
           value: ${DEV_PROJECT}
         - name: STAGE_PROJECT
           value: ${STAGE_PROJECT}
+        - name: PROD_PROJECT
+          value: ${PROD_PROJECT}
         - name: ENABLE_QUAY
           value: ${ENABLE_QUAY}
         jenkinsfile: |-
           def mvnCmd = "mvn -s configuration/cicd-settings-nexus3.xml"
+          def destApp = "tasks-green"
+          def activeApp = ""
 
           pipeline {
             agent {
@@ -167,6 +175,7 @@ objects:
                   }
                 }
               }
+
               stage('Promote to STAGE?') {
                 agent {
                   label 'skopeo'
@@ -189,10 +198,12 @@ objects:
                   }
                 }
               }
+
               stage('Deploy STAGE') {
                 steps {
                   script {
                     openshift.withCluster() {
+
                       openshift.withProject(env.STAGE_PROJECT) {
                         // Update the Config Map which contains the users for the Tasks application
                         openshift.selector('configmap', 'tasks-config').delete()
@@ -217,6 +228,97 @@ objects:
                   }
                 }
               }
+
+              stage('Promote to Blue/Green Production?') {
+                agent {
+                  label 'skopeo'
+                }
+                steps {
+                  timeout(time:15, unit:'MINUTES') {
+                      input message: "Promote to PROD?", ok: "Promote"
+                  }
+                  script {
+                    openshift.withCluster() {
+                      openshift.tag("${env.STAGE_PROJECT}/tasks:stage", "${env.PROD_PROJECT}/tasks:prod")
+                    }
+                  }        
+                }
+              }
+
+
+              // Blue/Green Deployment into Production
+              // -------------------------------------
+              // Do not activate the new version yet.
+              stage('Blue/Green Production Deployment') {
+                steps {
+
+                echo "Blue/Green Deployment"
+                  script {
+                    openshift.withCluster() {
+                      openshift.withProject(env.PROD_PROJECT) {
+                        activeApp = openshift.selector("route", "tasks").object().spec.to.name
+                        if (activeApp == "tasks-green") {
+                        destApp = "tasks-blue"
+                        }
+
+                        echo "Active Application: " + activeApp
+                        echo "Destination Application: " + destApp
+                        // Update the Image on the Production Deployment Config
+                        def dc = openshift.selector("dc/${destApp}").object()
+                        // OpenShift 4
+                        // dc.spec.template.spec.containers[0].image = "image-registry.openshift-image-registry.svc:5000/${devProject}/tasks:${prodTag}"
+
+                        // OpenShift 3
+                        //dc.spec.template.spec.containers[0].image="docker-registry.default.svc:5000/${devProject}/tasks:${prodTag}"
+                        //openshift.apply(dc)
+
+                        // Update Config Map in change config files changed in the source
+                        openshift.selector("configmap", "${destApp}-config").delete()
+
+                        // Update the Config Map which contains the users for the Tasks application
+                        def configmap = openshift.create('configmap', "${destApp}-config", '--from-file=./configuration/application-users.properties', '--from-file=./configuration/application-roles.properties')
+
+                        // Deploy the inactive application.
+                        openshift.selector("dc", "${destApp}").rollout().latest();
+
+                        // Wait for application to be deployed
+                        def dc_prod = openshift.selector("dc", "${destApp}").object() 
+                        def dc_version = dc_prod.status.latestVersion 
+                        def rc_prod = openshift.selector("rc", "${destApp}-${dc_version}").object() 
+                        
+                        echo "Waiting for ${destApp} to be ready"
+                        
+                        while (rc_prod.spec.replicas != rc_prod.status.readyReplicas) {
+                          sleep 5
+                          rc_prod = openshift.selector("rc", "${destApp}-${dc_version}").object()
+                        }
+                      }
+                    }
+                  }
+                }
+              }              
+
+              stage('Switch over to new Version') {
+                steps {
+                  input "Switch Production?"
+                  echo "Switching Production application to ${destApp}."
+                  /*
+                  timeout(time:15, unit:'MINUTES') {
+                      input message: "Promote to PROD?", ok: "Promote"
+                  }
+                  */
+                  script {
+                    openshift.withCluster() {
+                      openshift.withProject(env.PROD_PROJECT) {
+                      def route = openshift.selector("route/tasks").object()
+                      route.spec.to.name = "${destApp}"
+                      openshift.apply(route)
+                      }
+                    }
+                  }
+                }
+              }
+
             }
           }
       type: JenkinsPipeline
@@ -350,6 +452,17 @@ objects:
               oc patch dc tasks -p '{"spec": {"template": {"spec": {"containers": [{"name": "tasks", "imagePullPolicy": "Always"}]}}}}' -n ${STAGE_PROJECT}
               oc delete is tasks -n ${STAGE_PROJECT}
               oc secrets link default quay-cicd-secret --for=pull -n ${STAGE_PROJECT}
+
+              # prod
+              oc create secret docker-registry quay-cicd-secret --docker-server=quay.io --docker-username="${QUAY_USERNAME}" --docker-password="${QUAY_PASSWORD}" --docker-email=cicd@redhat.com -n ${PROD_PROJECT}
+              oc new-app --name=tasks --docker-image=quay.io/${QUAY_USERNAME}/${QUAY_REPOSITORY}:prod --allow-missing-images -n ${PROD_PROJECT}
+              oc create configmap tasks-config --from-literal="application-users.properties=Placeholder" --from-literal="application-roles.properties=Placeholder" -n ${PROD_PROJECT}
+              oc set triggers dc tasks --remove-all -n ${PROD_PROJECT}
+              oc patch dc tasks -p '{"spec": {"template": {"spec": {"containers": [{"name": "tasks", "imagePullPolicy": "Always"}]}}}}' -n ${PROD_PROJECT}
+              oc delete is tasks -n ${PROD_PROJECT}
+              oc secrets link default quay-cicd-secret --for=pull -n ${PROD_PROJECT}
+
+
             else
               # dev              
               oc new-build --name=tasks --image-stream=wildfly:latest --binary=true -n ${DEV_PROJECT}
@@ -361,6 +474,19 @@ objects:
               oc new-app tasks:stage --allow-missing-images -n ${STAGE_PROJECT}
               oc create configmap tasks-config --from-literal="application-users.properties=Placeholder" --from-literal="application-roles.properties=Placeholder" -n ${STAGE_PROJECT}
               oc set triggers dc -l app=tasks --containers=tasks --from-image=tasks:stage --manual -n ${STAGE_PROJECT}
+
+              # prod
+              # Create Blue Application
+              oc new-app tasks:prod --allow-missing-images --name=tasks-blue -n ${PROD_PROJECT}
+              oc create configmap tasks-blue-config --from-literal="application-users.properties=Placeholder" --from-literal="application-roles.properties=Placeholder" -n ${PROD_PROJECT}
+              oc set triggers dc -l app=tasks-blue --containers=tasks-blue --from-image=tasks:prod --manual -n ${PROD_PROJECT}
+              #oc set triggers dc/tasks-blue --remove-all -n ${PROD_PROJECT}
+
+              # Create Green Application
+              oc new-app tasks:prod --allow-missing-images --name=tasks-green -n ${PROD_PROJECT}
+              oc create configmap tasks-green-config --from-literal="application-users.properties=Placeholder" --from-literal="application-roles.properties=Placeholder" -n ${PROD_PROJECT}
+              oc set triggers dc -l app=tasks-green --containers=tasks-green --from-image=tasks:prod --manual -n ${PROD_PROJECT}
+              #oc set triggers dc/tasks-green --remove-all -n ${PROD_PROJECT}
             fi
             
             # dev project
@@ -377,6 +503,24 @@ objects:
             oc set probe dc/tasks --liveness  --get-url=http://:8080/ws/demo/healthcheck --initial-delay-seconds=180 --failure-threshold=10 --period-seconds=10 -n ${STAGE_PROJECT}
             oc rollout cancel dc/tasks -n ${DEV_PROJECT}
 
+            # prod project
+            # Blue Application
+            oc expose dc/tasks-blue --port=8080 -n ${PROD_PROJECT}
+            #oc expose svc/tasks-blue -n ${PROD_PROJECT}
+            oc set probe dc/tasks-blue --readiness --get-url=http://:8080/ws/demo/healthcheck --initial-delay-seconds=30 --failure-threshold=10 --period-seconds=10 -n ${PROD_PROJECT}
+            oc set probe dc/tasks-blue --liveness  --get-url=http://:8080/ws/demo/healthcheck --initial-delay-seconds=180 --failure-threshold=10 --period-seconds=10 -n ${PROD_PROJECT}
+            oc rollout cancel dc/tasks-blue -n ${PROD_PROJECT}
+
+            # Green Application
+            oc expose dc/tasks-green --port=8080 -n ${PROD_PROJECT}
+            #oc expose svc/tasks-green -n ${PROD_PROJECT}
+            oc set probe dc/tasks-green --readiness --get-url=http://:8080/ws/demo/healthcheck --initial-delay-seconds=30 --failure-threshold=10 --period-seconds=10 -n ${PROD_PROJECT}
+            oc set probe dc/tasks-green --liveness  --get-url=http://:8080/ws/demo/healthcheck --initial-delay-seconds=180 --failure-threshold=10 --period-seconds=10 -n ${PROD_PROJECT}
+            oc rollout cancel dc/tasks-green -n ${PROD_PROJECT}
+
+            # Expose Blue service as route to make blue application active
+            oc expose svc/tasks-blue --name tasks -n ${PROD_PROJECT}
+
             ##### adjust app #####
             # autoscale
             # set limits
@@ -389,9 +533,20 @@ objects:
             oc autoscale dc/tasks --min 1 --max 10 --cpu-percent=60 -n ${STAGE_PROJECT}
             oc set resources dc/tasks --limits=cpu=1,memory=300Mi --requests=cpu=50m,memory=60Mi -n ${STAGE_PROJECT}
 
+            # prod project
+            #blue
+            oc autoscale dc/tasks-blue --min 1 --max 10 --cpu-percent=60 -n ${PROD_PROJECT}
+            oc set resources dc/tasks-blue --limits=cpu=1,memory=300Mi --requests=cpu=50m,memory=60Mi -n ${PROD_PROJECT}
+
+            #green
+            oc autoscale dc/tasks-green --min 1 --max 10 --cpu-percent=60 -n ${PROD_PROJECT}
+            oc set resources dc/tasks-green --limits=cpu=1,memory=300Mi --requests=cpu=50m,memory=60Mi -n ${PROD_PROJECT}
+
             # deploy gogs
             HOSTNAME=$(oc get route jenkins -o template --template='{{.spec.host}}' | sed "s/jenkins-${CICD_NAMESPACE}.//g")
             GOGS_HOSTNAME="gogs-$CICD_NAMESPACE.$HOSTNAME"
+
+             ##### end adjust app #####
 
             if [ "${EPHEMERAL}" == "true" ] ; then
               oc new-app -f https://raw.githubusercontent.com/OpenShiftDemos/gogs-openshift-docker/master/openshift/gogs-template.yaml \
