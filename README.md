@@ -33,6 +33,9 @@ The following diagram shows the steps included in the deployment pipeline:
 
 ![](images/pipeline.svg)
 
+
+![](images/pipeline2.svg)
+
 The application used in this pipeline is a JAX-RS application which is available on GitHub and is imported into Gogs during the setup process:
 [https://github.com/OpenShiftDemos/openshift-tasks](https://github.com/OpenShiftDemos/openshift-tasks/tree/eap-7)
 
